@@ -4,8 +4,10 @@ import plotly.express as px
 from datetime import date, timedelta
 import os
 
-# --- 基礎設定 ---
-SAVE_DIR = "projects"
+# --- 基礎路徑設定 ---
+# 使用絕對路徑確保在不同環境（本地/GitHub）都能準確讀取 CSV
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SAVE_DIR = os.path.join(BASE_DIR, "projects")
 if not os.path.exists(SAVE_DIR):
     os.makedirs(SAVE_DIR)
 
@@ -31,32 +33,39 @@ def load_project_data(path):
         } for s in stages]
         return pd.DataFrame(data)
 
-# --- 側邊欄 ---
+# --- 側邊欄：專案切換與功能選單 ---
 st.sidebar.title("🏢 專案選擇")
 all_projects = [f.replace(".csv", "") for f in os.listdir(SAVE_DIR) if f.endswith(".csv")]
 if not all_projects:
     all_projects = ["預設專案"]
 current_project = st.sidebar.selectbox(label="當前專案", options=all_projects, label_visibility="collapsed")
-st.sidebar.divider()
-st.sidebar.title("🚀 Project Data")
-menu = st.sidebar.radio(label="導覽選單", options=["📝 專案進度", "🖼️ 基地照片", "⚖️ 相關法規"], label_visibility="collapsed")
 
+st.sidebar.divider()
+st.sidebar.title("🚀 主要功能")
+menu = st.sidebar.radio(
+    label="導覽選單", 
+    options=["📝 專案進度", "📐 面積表", "🖼️ 基地照片", "⚖️ 相關法規"], 
+    label_visibility="collapsed"
+)
+
+# 讀取當前專案的 CSV 檔案
 save_path = os.path.join(SAVE_DIR, f"{current_project}.csv")
 df = load_project_data(save_path)
 
 # --- 右側顯示區 ---
 
+# 1. 專案進度標籤頁
 if menu == "📝 專案進度":
     st.title(f"🏢 專案進度：{current_project}")
     
-    # --- 修改點：將標題與按鈕並列，並縮小按鈕 ---
-    col1, col2 = st.columns([9, 1])
-    with col1:
+    # 標題與儲存按鈕並列
+    col_h1, col_h2 = st.columns([8.5, 1.5])
+    with col_h1:
         st.subheader("📋 工作清單")
-    with col2:
-        # 移除 primary 類型與容器寬度，並更名為「儲存」
-        save_btn = st.button("儲存")
+    with col_h2:
+        save_btn = st.button("儲存變更", key="save_gantt")
 
+    # 資料編輯器
     edited_df = st.data_editor(
         df,
         column_config={
@@ -73,19 +82,19 @@ if menu == "📝 專案進度":
 
     if save_btn:
         edited_df.to_csv(save_path, index=False)
-        st.success("✅ 已儲存")
+        st.success("✅ 已儲存變更")
         st.rerun()
 
     st.divider()
-
     st.subheader("📊 工程進度表") 
     
+    # 準備甘特圖數據
     plot_list = []
     y_labels = [f"{i+1}. {row['階段']}" for i, row in edited_df.iterrows()] 
     
     for i, row in edited_df.iterrows():
         plot_list.append(dict(
-            階段ID=i,
+            階段ID=i, 
             階段名稱=y_labels[i],
             開始=row['預計開始'], 
             結束=row['預計結束'],
@@ -95,24 +104,25 @@ if menu == "📝 專案進度":
     
     plot_data = pd.DataFrame(plot_list)
     
+    # 計算 X 軸顯示緩衝 (前後各 25 天)
     start_view = plot_data['開始'].min() - timedelta(days=25)
     end_view = plot_data['結束'].max() + timedelta(days=25)
     
     fig = px.timeline(
-        plot_data, 
-        x_start="開始", 
-        x_end="結束", 
-        y="階段ID", 
+        plot_data, x_start="開始", x_end="結束", y="階段ID", 
         color_discrete_sequence=["#34C9A9"]
     )
     
+    # 加入桿子前後的日期標記 (Annotation)
     new_annotations = []
     for i, row in plot_data.iterrows():
+        # 左側日期 (開始)
         new_annotations.append(dict(
             x=row['開始'], y=i, text=row['開始標籤'],
             showarrow=False, xanchor='right', xshift=-10,
             font=dict(size=12, color="#1A1A1A")
         ))
+        # 右側日期 (結束)
         new_annotations.append(dict(
             x=row['結束'], y=i, text=row['結束標籤'],
             showarrow=False, xanchor='left', xshift=10,
@@ -121,47 +131,79 @@ if menu == "📝 專案進度":
     
     fig.update_layout(annotations=new_annotations)
     
+    # X 軸格式優化：先年後月、90%黑、隱藏滑桿
     fig.update_xaxes(
-        type="date",
-        range=[start_view, end_view],
-        tickformat="%Y\n%m月", 
-        dtick="M1", 
-        showgrid=True,
-        gridcolor='LightGrey', 
-        side="top",
-        title=None,
+        type="date", range=[start_view, end_view],
+        tickformat="%Y\n%m月", dtick="M1", 
+        showgrid=True, gridcolor='LightGrey', side="top", title=None,
         rangeslider=dict(visible=False),
         tickfont=dict(size=14, color="#1A1A1A", family="Arial, sans-serif")
     )
     
+    # Y 軸格式優化：90%黑、字體放大
     fig.update_yaxes(
-        title=None, 
-        autorange="reversed",
-        automargin=True,
-        tickmode="array",
-        tickvals=plot_data['階段ID'],
-        ticktext=plot_data['階段名稱'],
+        title=None, autorange="reversed", automargin=True,
+        tickmode="array", tickvals=plot_data['階段ID'], ticktext=plot_data['階段名稱'],
         ticklabelstandoff=15, 
         tickfont=dict(size=18, color="#1A1A1A", family="Arial, sans-serif"),
         side="left"
     )
     
     fig.update_layout(
-        height=480, 
-        margin=dict(l=180, r=100, t=100, b=40),
-        showlegend=False,
-        dragmode="pan", 
-        font=dict(size=14, color="#1A1A1A")
+        height=480, margin=dict(l=180, r=100, t=100, b=40),
+        showlegend=False, dragmode="pan", font=dict(size=14, color="#1A1A1A")
     )
 
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True, 'modeBarButtonsToRemove': ['select2d', 'lasso2d']})
 
+# 2. 面積表標籤頁
+elif menu == "📐 面積表":
+    st.title(f"📐 面積計算與管理：{current_project}")
+    
+    # 頂部儀表板卡片
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    with col_m1: st.metric("土地面積 (坪)", "500.00")
+    with col_m2: st.metric("基準容積率", "225%", "住三")
+    with col_m3: st.metric("允建總樓地板", "1,250.50 坪")
+    with col_m4: st.metric("預估公設比", "34.5%")
+
+    st.divider()
+    
+    # 切換編輯與計算結果
+    tab_input, tab_calc = st.tabs(["📝 基本參數輸入", "📊 詳細面積連動表"])
+    
+    with tab_input:
+        st.write("請輸入專案法規基礎數值：")
+        base_data = {
+            "項目": ["土地分區", "土地面積 (坪)", "法定建蔽率 (%)", "基準容積率 (%)", "容積獎勵 (%)", "容積移轉 (%)"],
+            "參數值": ["第三種住宅區", "500.0", "45", "225", "10", "15"],
+            "備註": ["-", "-", "法定上限", "法定上限", "危老獎勵", "代金繳納"]
+        }
+        st.data_editor(pd.DataFrame(base_data), use_container_width=True, key="area_base_editor")
+
+    with tab_calc:
+        st.write("自動計算連動清單 (待填入具體公式邏輯)：")
+        calc_data = {
+            "計算項目": ["建築面積", "基準容積地板", "獎勵容積地板", "允建總容積地板", "免計項目 (陽台/梯間)"],
+            "坪數": [225.0, 1125.0, 112.5, 1237.5, 185.6],
+            "計算式說明": ["土地面積 * 建蔽率", "土地面積 * 基準容積", "基準容積 * 獎勵比例", "基準 + 獎勵", "容積地板 * 15%"]
+        }
+        st.table(pd.DataFrame(calc_data))
+
+    # 與進度表按鈕風格一致的儲存鍵
+    col_s1, col_s2 = st.columns([8.5, 1.5])
+    with col_s2:
+        st.button("儲存面積變更", key="save_area")
+
+# 3. 基地照片 (暫留)
 elif menu == "🖼️ 基地照片":
     st.title("🖼️ 基地照片紀錄")
-    st.info(f"當前檢視專案：{current_project}")
-    st.file_uploader("請選擇照片上傳", type=["jpg", "png", "jpeg"])
+    st.info("此功能目前為框架，可後續擴充相簿管理。")
+    st.file_uploader("上傳基地照片", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
 
+# 4. 相關法規 (暫留)
 elif menu == "⚖️ 相關法規":
     st.title("⚖️ 相關法規查詢")
-    st.text_input("🔍 請輸入關鍵字搜尋")
+    st.write("快速連結至常用的建築法規資料庫：")
+    st.link_button("台北市法規查詢系統", "https://www.laws.taipei.gov.tw/")
     st.link_button("全國法規資料庫", "https://law.moj.gov.tw/")
